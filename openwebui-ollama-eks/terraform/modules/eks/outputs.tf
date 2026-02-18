@@ -14,6 +14,10 @@ output "cluster_certificate_authority_data" {
 }
 
 output "oidc_provider_arn" {
-  description = "OIDC provider ARN for IRSA"
-  value       = module.this.oidc_provider_arn
+  value = module.this.oidc_provider_arn
 }
+
+output "oidc_provider_url" {
+  value = module.this.oidc_provider
+}
+

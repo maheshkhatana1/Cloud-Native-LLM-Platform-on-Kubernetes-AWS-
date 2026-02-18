@@ -1,3 +1,7 @@
+############################################
+# IAM Policy for AWS Load Balancer Controller
+############################################
+
 data "aws_iam_policy_document" "alb_controller" {
   statement {
     effect = "Allow"
@@ -28,13 +32,16 @@ data "aws_iam_policy_document" "alb_controller" {
 }
 
 resource "aws_iam_policy" "alb_controller" {
-  name   = "${var.cluster_name}-alb-controller"
+  name   = "${var.cluster_name}-alb-controller-policy"
   policy = data.aws_iam_policy_document.alb_controller.json
 }
 
+############################################
+# IAM Role for IRSA
+############################################
 
 resource "aws_iam_role" "alb_controller" {
-  name = "${var.cluster_name}-alb-controller"
+  name = "${var.cluster_name}-alb-controller-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -46,38 +53,50 @@ resource "aws_iam_role" "alb_controller" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${replace(var.oidc_provider_arn, "arn:aws:iam::", "")}:sub" ="system:serviceaccount:kube-system:aws-load-balancer-controller"
+          "${var.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
         }
       }
     }]
   })
 }
 
+############################################
+# Attach Policy to Role
+############################################
 
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+resource "aws_iam_role_policy_attachment" "alb_controller_attach" {
+  role       = aws_iam_role.alb_controller.name
+  policy_arn = aws_iam_policy.alb_controller.arn
+}
+
+############################################
+# Kubernetes Service Account (IRSA Binding)
+############################################
+
+resource "kubernetes_service_account" "alb_controller" {
+  metadata {
+    name      = "aws-load-balancer-controller"
+    namespace = "kube-system"
+
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller.arn
+    }
   }
 }
 
-data "aws_eks_cluster" "this" {
-  name = var.cluster_name
-}
-
-data "aws_eks_cluster_auth" "this" {
-  name = var.cluster_name
-}
-
-
-
+############################################
+# Install AWS Load Balancer Controller
+############################################
 
 resource "helm_release" "alb_controller" {
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   namespace  = "kube-system"
+
+  depends_on = [
+    kubernetes_service_account.alb_controller
+  ]
 
   set {
     name  = "clusterName"
@@ -104,4 +123,3 @@ resource "helm_release" "alb_controller" {
     value = "aws-load-balancer-controller"
   }
 }
-
